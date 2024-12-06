@@ -139,197 +139,27 @@ class QuantityEstimator(QMainWindow):
         self.known_scale = None
         self.current_pixmap = None
         self.calibration_in_progress = False
-        self.show_magnifier = False
+        self.show_magnifier = True  # Always show magnifier
         self.last_mouse_pos = None
         
         # Initialize UI after all attributes
         self.initUI()
         self.setWindowTitle('Quantity Estimator')
         self.setGeometry(100, 100, 1400, 800)
-
-    def initUI(self):
-        main_widget = QWidget()
-        self.setCentralWidget(main_widget)
-        main_layout = QHBoxLayout(main_widget)
-
-        # Create sidebar
-        sidebar = QWidget()
-        sidebar.setMaximumWidth(300)
-        sidebar.setMinimumWidth(250)
-        sidebar_layout = QVBoxLayout(sidebar)
-
-        # Project Information
-        project_group = QGroupBox("Project Information")
-        project_layout = QFormLayout()
-        self.project_name = QLineEdit()
-        self.project_number = QLineEdit()
-        project_layout.addRow("Project Name:", self.project_name)
-        project_layout.addRow("Project Number:", self.project_number)
-        project_group.setLayout(project_layout)
-        sidebar_layout.addWidget(project_group)
-
-        # Tools Group
-        tools_group = QGroupBox("Measurement Tools")
-        tools_layout = QVBoxLayout()
-
-        # Calibration Group
-        calibration_group = QGroupBox("Scale Calibration")
-        calibration_layout = QVBoxLayout()
         
-        scale_layout = QHBoxLayout()
-        self.scale_value = QDoubleSpinBox()
-        self.scale_value.setRange(0.1, 1000)
-        self.scale_value.setValue(1.0)
-        self.scale_unit = QComboBox()
-        self.scale_unit.addItems(['1/4"=1\'', '1/8"=1\'', '1/16"=1\'', '3/32"=1\'', 'Custom'])
-        scale_layout.addWidget(QLabel("Scale:"))
-        scale_layout.addWidget(self.scale_value)
-        scale_layout.addWidget(self.scale_unit)
+        # Enable mouse tracking for the entire window
+        self.setMouseTracking(True)
+        self.centralWidget().setMouseTracking(True)
         
-        self.calibrate_button = QPushButton('Calibrate Scale')
-        self.calibrate_button.clicked.connect(self.start_calibration)
-        
-        calibration_layout.addLayout(scale_layout)
-        calibration_layout.addWidget(self.calibrate_button)
-        calibration_group.setLayout(calibration_layout)
-        tools_layout.addWidget(calibration_group)
-
-        # Orientation Group
-        orientation_group = QGroupBox("Page Orientation")
-        orientation_layout = QHBoxLayout()
-        
-        self.portrait_btn = QRadioButton("Portrait")
-        self.landscape_right_btn = QRadioButton("Landscape →")
-        self.landscape_left_btn = QRadioButton("Landscape ←")
-        
-        self.orientation_group = QButtonGroup()
-        self.orientation_group.addButton(self.portrait_btn)
-        self.orientation_group.addButton(self.landscape_right_btn)
-        self.orientation_group.addButton(self.landscape_left_btn)
-        
-        self.portrait_btn.setChecked(True)
-        
-        orientation_layout.addWidget(self.portrait_btn)
-        orientation_layout.addWidget(self.landscape_right_btn)
-        orientation_layout.addWidget(self.landscape_left_btn)
-        
-        self.orientation_group.buttonClicked.connect(self.change_orientation)
-        orientation_group.setLayout(orientation_layout)
-        tools_layout.addWidget(orientation_group)
-
-        # Measurement Type
-        self.measurement_type = QComboBox()
-        self.measurement_type.addItems(['None', 'Distance', 'Area', 'Count'])
-        self.measurement_type.currentTextChanged.connect(self.change_measurement_mode)
-
-        description_layout = QFormLayout()
-        self.description_input = QLineEdit()
-        description_layout.addRow("Description:", self.description_input)
-
-        tools_layout.addWidget(QLabel("Measurement Type:"))
-        tools_layout.addWidget(self.measurement_type)
-        tools_layout.addLayout(description_layout)
-        tools_group.setLayout(tools_layout)
-        sidebar_layout.addWidget(tools_group)
-
-        # Measurements Group
-        measurements_group = QGroupBox("Measurements")
-        measurements_layout = QVBoxLayout()
-        self.measurements_tree = QTreeWidget()
-        self.measurements_tree.setHeaderLabels(['Type', 'Value', 'Description'])
-        self.measurements_tree.setColumnCount(3)
-        measurements_layout.addWidget(self.measurements_tree)
-        measurements_group.setLayout(measurements_layout)
-        sidebar_layout.addWidget(measurements_group)
-
-        # Layer Controls
-        layer_group = QGroupBox("Layers")
-        layer_layout = QVBoxLayout()
-        
-        self.layer_controls = {}
-        for layer_name, layer in self.layers.items():
-            layer_widget = QWidget()
-            layer_h_layout = QHBoxLayout()
-            layer_widget.setLayout(layer_h_layout)
-            
-            # Visibility checkbox
-            visibility_cb = QCheckBox()
-            visibility_cb.setChecked(True)
-            visibility_cb.stateChanged.connect(lambda state, name=layer_name: self.toggle_layer_visibility(name, state))
-            
-            # Color indicator
-            color_btn = QPushButton()
-            color_btn.setFixedSize(20, 20)
-            color_btn.setStyleSheet(f"background-color: {layer.color.name()}; border: none;")
-            color_btn.clicked.connect(lambda checked, name=layer_name: self.change_layer_color(name))
-            
-            # Layer name label
-            name_label = QLabel(layer_name)
-            
-            layer_h_layout.addWidget(visibility_cb)
-            layer_h_layout.addWidget(color_btn)
-            layer_h_layout.addWidget(name_label)
-            layer_h_layout.addStretch()
-            
-            self.layer_controls[layer_name] = {
-                'widget': layer_widget,
-                'checkbox': visibility_cb,
-                'color_btn': color_btn
-            }
-            layer_layout.addWidget(layer_widget)
-        
-        layer_group.setLayout(layer_layout)
-        sidebar_layout.addWidget(layer_group)
-
-        main_layout.addWidget(sidebar)
-
-        # Content Area
-        content_widget = QWidget()
-        content_layout = QVBoxLayout(content_widget)
-
-        # Toolbar
-        toolbar = QHBoxLayout()
-        
-        self.load_button = QPushButton('Load PDF')
-        self.load_button.clicked.connect(self.load_pdf)
-        
-        self.zoom_in_button = QPushButton('Zoom In')
-        self.zoom_in_button.clicked.connect(self.zoom_in)
-        
-        self.zoom_out_button = QPushButton('Zoom Out')
-        self.zoom_out_button.clicked.connect(self.zoom_out)
-
-        self.page_spin = QSpinBox()
-        self.page_spin.setMinimum(1)
-        self.page_spin.valueChanged.connect(self.change_page)
-
-        toolbar.addWidget(self.load_button)
-        toolbar.addWidget(self.zoom_in_button)
-        toolbar.addWidget(self.zoom_out_button)
-        toolbar.addWidget(QLabel("Page:"))
-        toolbar.addWidget(self.page_spin)
-        toolbar.addStretch()
-
-        content_layout.addLayout(toolbar)
-
-        # PDF Display Area
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setAlignment(Qt.AlignCenter)
-
-        self.pdf_label = QLabel()
-        self.pdf_label.setAlignment(Qt.AlignCenter)
-        self.pdf_label.setMouseTracking(True)
-        self.scroll_area.setWidget(self.pdf_label)
-
-        self.magnifier = Magnifier(self.pdf_label)
-        
-        self.pdf_label.mousePressEvent = self.on_mouse_press
-        self.pdf_label.mouseMoveEvent = self.on_mouse_move
-        self.pdf_label.mouseReleaseEvent = self.on_mouse_release
-
-        content_layout.addWidget(self.scroll_area)
-        main_layout.addWidget(content_widget)
+    def mouseMoveEvent(self, event):
+        if self.current_pixmap and self.magnifier:
+            # Get the position relative to the PDF label
+            pdf_pos = self.pdf_label.mapFromGlobal(event.globalPos())
+            if self.pdf_label.rect().contains(pdf_pos):
+                self.magnifier.update_magnifier(pdf_pos, self.current_pixmap, True)
+            else:
+                self.magnifier.hide()
+        super().mouseMoveEvent(event)
 
     def closeEvent(self, event):
         try:
@@ -548,49 +378,35 @@ class QuantityEstimator(QMainWindow):
             print(f"Error in keyPressEvent: {str(e)}")
 
     def change_measurement_mode(self, mode):
-        self.measurement_mode = mode.lower() if mode != 'None' else None
+        # Reset current measurement state
         self.measurement_points = []
         self.current_measurement = None
-        self.display_page()
-
-    def calculate_distance(self):
-        try:
-            if len(self.measurement_points) != 2:
-                return
-            
-            pixels = ((self.measurement_points[1].x() - self.measurement_points[0].x()) ** 2 +
-                     (self.measurement_points[1].y() - self.measurement_points[0].y()) ** 2) ** 0.5
-            
-            if self.scale_calibration:
-                feet = pixels / self.scale_calibration
-                description = self.description_input.text()
-                self.add_measurement_to_list("Distance", feet, "feet", description)
-                
-                self.display_page()
-                
-            self.measurement_points = []
-                
-        except Exception as e:
-            print(f"Error in calculate_distance: {str(e)}")
-            self.measurement_points = []
-            self.display_page()
-
-    def calculate_area(self):
-        if len(self.measurement_points) < 3:
-            return
-
-        area = 0
-        for i in range(len(self.measurement_points)):
-            j = (i + 1) % len(self.measurement_points)
-            area += self.measurement_points[i].x() * self.measurement_points[j].y()
-            area -= self.measurement_points[j].x() * self.measurement_points[i].y()
-        area = abs(area) / 2
-
-        square_feet = area / (self.scale_calibration ** 2)
-        self.add_measurement_to_list("Area", square_feet, "sq.ft")
-        QMessageBox.information(self, "Area", f"Area: {square_feet:.2f} square feet")
         self.drawing = False
-        self.measurement_points = []
+        
+        # Always keep magnifier active regardless of measurement mode
+        self.show_magnifier = True
+        
+        if mode == 'None':
+            self.measurement_mode = None
+            self.active_layer = None
+        elif mode == 'Distance':
+            self.measurement_mode = 'Distance'
+            self.active_layer = 'Distance'
+        elif mode == 'Area':
+            self.measurement_mode = 'Area'
+            self.active_layer = 'Area'
+        elif mode == 'Count':
+            self.measurement_mode = 'Count'
+            self.active_layer = None
+            
+        # Update cursor based on measurement mode
+        if self.measurement_mode in ['Distance', 'Area', 'Count']:
+            self.pdf_label.setCursor(Qt.CrossCursor)
+        else:
+            self.pdf_label.setCursor(Qt.ArrowCursor)
+            
+        # Redraw to update display
+        self.display_page()
 
     def change_orientation(self, button):
         if button == self.portrait_btn:
@@ -714,6 +530,231 @@ class QuantityEstimator(QMainWindow):
 
     def zoom_out(self):
         self.scale_factor /= 1.2
+        self.display_page()
+
+    def initUI(self):
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        main_layout = QHBoxLayout(main_widget)
+
+        # Create sidebar
+        sidebar = QWidget()
+        sidebar.setMaximumWidth(300)
+        sidebar.setMinimumWidth(250)
+        sidebar_layout = QVBoxLayout(sidebar)
+
+        # Project Information
+        project_group = QGroupBox("Project Information")
+        project_layout = QFormLayout()
+        self.project_name = QLineEdit()
+        self.project_number = QLineEdit()
+        project_layout.addRow("Project Name:", self.project_name)
+        project_layout.addRow("Project Number:", self.project_number)
+        project_group.setLayout(project_layout)
+        sidebar_layout.addWidget(project_group)
+
+        # Tools Group
+        tools_group = QGroupBox("Measurement Tools")
+        tools_layout = QVBoxLayout()
+
+        # Calibration Group
+        calibration_group = QGroupBox("Scale Calibration")
+        calibration_layout = QVBoxLayout()
+        
+        scale_layout = QHBoxLayout()
+        self.scale_value = QDoubleSpinBox()
+        self.scale_value.setRange(0.1, 1000)
+        self.scale_value.setValue(1.0)
+        self.scale_unit = QComboBox()
+        self.scale_unit.addItems(['1/4"=1\'', '1/8"=1\'', '1/16"=1\'', '3/32"=1\'', 'Custom'])
+        scale_layout.addWidget(QLabel("Scale:"))
+        scale_layout.addWidget(self.scale_value)
+        scale_layout.addWidget(self.scale_unit)
+        
+        self.calibrate_button = QPushButton('Calibrate Scale')
+        self.calibrate_button.clicked.connect(self.start_calibration)
+        
+        calibration_layout.addLayout(scale_layout)
+        calibration_layout.addWidget(self.calibrate_button)
+        calibration_group.setLayout(calibration_layout)
+        tools_layout.addWidget(calibration_group)
+
+        # Orientation Group
+        orientation_group = QGroupBox("Page Orientation")
+        orientation_layout = QHBoxLayout()
+        
+        self.portrait_btn = QRadioButton("Portrait")
+        self.landscape_right_btn = QRadioButton("Landscape →")
+        self.landscape_left_btn = QRadioButton("Landscape ←")
+        
+        self.orientation_group = QButtonGroup()
+        self.orientation_group.addButton(self.portrait_btn)
+        self.orientation_group.addButton(self.landscape_right_btn)
+        self.orientation_group.addButton(self.landscape_left_btn)
+        
+        self.portrait_btn.setChecked(True)
+        
+        orientation_layout.addWidget(self.portrait_btn)
+        orientation_layout.addWidget(self.landscape_right_btn)
+        orientation_layout.addWidget(self.landscape_left_btn)
+        
+        self.orientation_group.buttonClicked.connect(self.change_orientation)
+        orientation_group.setLayout(orientation_layout)
+        tools_layout.addWidget(orientation_group)
+
+        # Measurement Type
+        self.measurement_type = QComboBox()
+        self.measurement_type.addItems(['None', 'Distance', 'Area', 'Count'])
+        self.measurement_type.currentTextChanged.connect(self.change_measurement_mode)
+
+        description_layout = QFormLayout()
+        self.description_input = QLineEdit()
+        description_layout.addRow("Description:", self.description_input)
+
+        tools_layout.addWidget(QLabel("Measurement Type:"))
+        tools_layout.addWidget(self.measurement_type)
+        tools_layout.addLayout(description_layout)
+        tools_group.setLayout(tools_layout)
+        sidebar_layout.addWidget(tools_group)
+
+        # Measurements Group
+        measurements_group = QGroupBox("Measurements")
+        measurements_layout = QVBoxLayout()
+        self.measurements_tree = QTreeWidget()
+        self.measurements_tree.setHeaderLabels(['Type', 'Value', 'Description'])
+        self.measurements_tree.setColumnCount(3)
+        measurements_layout.addWidget(self.measurements_tree)
+        measurements_group.setLayout(measurements_layout)
+        sidebar_layout.addWidget(measurements_group)
+
+        # Layer Controls
+        layer_group = QGroupBox("Layers")
+        layer_layout = QVBoxLayout()
+        
+        self.layer_controls = {}
+        for layer_name, layer in self.layers.items():
+            layer_widget = QWidget()
+            layer_h_layout = QHBoxLayout()
+            layer_widget.setLayout(layer_h_layout)
+            
+            # Visibility checkbox
+            visibility_cb = QCheckBox()
+            visibility_cb.setChecked(True)
+            visibility_cb.stateChanged.connect(lambda state, name=layer_name: self.toggle_layer_visibility(name, state))
+            
+            # Color indicator
+            color_btn = QPushButton()
+            color_btn.setFixedSize(20, 20)
+            color_btn.setStyleSheet(f"background-color: {layer.color.name()}; border: none;")
+            color_btn.clicked.connect(lambda checked, name=layer_name: self.change_layer_color(name))
+            
+            # Layer name label
+            name_label = QLabel(layer_name)
+            
+            layer_h_layout.addWidget(visibility_cb)
+            layer_h_layout.addWidget(color_btn)
+            layer_h_layout.addWidget(name_label)
+            layer_h_layout.addStretch()
+            
+            self.layer_controls[layer_name] = {
+                'widget': layer_widget,
+                'checkbox': visibility_cb,
+                'color_btn': color_btn
+            }
+            layer_layout.addWidget(layer_widget)
+        
+        layer_group.setLayout(layer_layout)
+        sidebar_layout.addWidget(layer_group)
+
+        main_layout.addWidget(sidebar)
+
+        # Content Area
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+
+        # Toolbar
+        toolbar = QHBoxLayout()
+        
+        self.load_button = QPushButton('Load PDF')
+        self.load_button.clicked.connect(self.load_pdf)
+        
+        self.zoom_in_button = QPushButton('Zoom In')
+        self.zoom_in_button.clicked.connect(self.zoom_in)
+        
+        self.zoom_out_button = QPushButton('Zoom Out')
+        self.zoom_out_button.clicked.connect(self.zoom_out)
+
+        self.page_spin = QSpinBox()
+        self.page_spin.setMinimum(1)
+        self.page_spin.valueChanged.connect(self.change_page)
+
+        toolbar.addWidget(self.load_button)
+        toolbar.addWidget(self.zoom_in_button)
+        toolbar.addWidget(self.zoom_out_button)
+        toolbar.addWidget(QLabel("Page:"))
+        toolbar.addWidget(self.page_spin)
+        toolbar.addStretch()
+
+        content_layout.addLayout(toolbar)
+
+        # PDF Display Area
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setAlignment(Qt.AlignCenter)
+
+        self.pdf_label = QLabel()
+        self.pdf_label.setAlignment(Qt.AlignCenter)
+        self.pdf_label.setMouseTracking(True)
+        self.scroll_area.setWidget(self.pdf_label)
+
+        self.magnifier = Magnifier(self.pdf_label)
+        
+        self.pdf_label.mousePressEvent = self.on_mouse_press
+        self.pdf_label.mouseMoveEvent = self.on_mouse_move
+        self.pdf_label.mouseReleaseEvent = self.on_mouse_release
+
+        content_layout.addWidget(self.scroll_area)
+        main_layout.addWidget(content_widget)
+
+    def calculate_distance(self):
+        try:
+            if len(self.measurement_points) != 2:
+                return
+            
+            pixels = ((self.measurement_points[1].x() - self.measurement_points[0].x()) ** 2 +
+                     (self.measurement_points[1].y() - self.measurement_points[0].y()) ** 2) ** 0.5
+            
+            if self.scale_calibration:
+                feet = pixels / self.scale_calibration
+                description = self.description_input.text()
+                self.add_measurement_to_list("Distance", feet, "feet", description)
+                
+                self.display_page()
+                
+            self.measurement_points = []
+                
+        except Exception as e:
+            print(f"Error in calculate_distance: {str(e)}")
+            self.measurement_points = []
+            self.display_page()
+
+    def calculate_area(self):
+        if len(self.measurement_points) < 3:
+            return
+
+        area = 0
+        for i in range(len(self.measurement_points)):
+            j = (i + 1) % len(self.measurement_points)
+            area += self.measurement_points[i].x() * self.measurement_points[j].y()
+            area -= self.measurement_points[j].x() * self.measurement_points[i].y()
+        area = abs(area) / 2
+
+        square_feet = area / (self.scale_calibration ** 2)
+        description = self.description_input.text()
+        self.add_measurement_to_list("Area", square_feet, "sq.ft", description)
+        
+        self.drawing = False
+        self.measurement_points = []
         self.display_page()
 
 def main():
