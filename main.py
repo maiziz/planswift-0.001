@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                            QInputDialog, QMessageBox, QComboBox, QTreeWidget, 
                            QTreeWidgetItem, QTabWidget, QGroupBox, QFormLayout,
                            QLineEdit, QSpinBox, QDoubleSpinBox, QRadioButton,
-                           QButtonGroup, QDialog)
+                           QButtonGroup, QDialog, QCheckBox)
 from PyQt5.QtCore import Qt, QPointF, QRectF, QPoint
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont, QIcon, QCursor
 import gc
@@ -16,52 +16,67 @@ class Magnifier(QLabel):
         super().__init__(parent)
         self.parent = parent
         self.zoom_factor = zoom_factor
-        self.size = 150
+        self.size = 500  
         self.setFixedSize(self.size, self.size)
         self.setMouseTracking(True)
         self.hide()
+        self.setStyleSheet("""
+            background-color: rgba(255, 255, 255, 20);
+            border: 2px solid red;
+            border-radius: 250px;
+        """)
 
     def update_magnifier(self, pos, source_pixmap, force_show=False):
         try:
             if source_pixmap and not source_pixmap.isNull():
-                # Get the area to magnify
-                x = max(0, pos.x() - self.size/(2*self.zoom_factor))
-                y = max(0, pos.y() - self.size/(2*self.zoom_factor))
-                width = self.size/self.zoom_factor
-                height = self.size/self.zoom_factor
+                source_size = self.size / self.zoom_factor
+                padding = source_size * 0.1  
                 
-                # Create source and target rects
-                source_rect = QRectF(x, y, width, height)
+                doc_pos = self.parent.mapFromGlobal(QCursor.pos())
+                
+                x = doc_pos.x() - (source_size + padding) / 2
+                y = doc_pos.y() - (source_size + padding) / 2
+                
+                source_rect = QRectF(x, y, source_size + padding, source_size + padding)
                 target_rect = QRectF(0, 0, self.size, self.size)
                 
-                # Create magnified pixmap
                 result = QPixmap(self.size, self.size)
                 result.fill(Qt.transparent)
                 
                 painter = QPainter(result)
                 painter.setRenderHint(QPainter.SmoothPixmapTransform)
+                
                 painter.drawPixmap(target_rect, source_pixmap, source_rect)
                 
-                # Draw crosshair
-                pen = QPen(Qt.red, 1, Qt.SolidLine)
-                painter.setPen(pen)
                 center = QPoint(self.size//2, self.size//2)
-                painter.drawLine(center.x(), 0, center.x(), self.size)
-                painter.drawLine(0, center.y(), self.size, center.y())
-                painter.end()
                 
+                painter.setPen(QPen(QColor(255, 0, 0, 80), 3))
+                painter.drawEllipse(center, self.size//2 - 4, self.size//2 - 4)
+                
+                painter.setPen(QPen(Qt.red, 2))
+                painter.drawLine(center.x(), center.y() - 20, center.x(), center.y() + 20)
+                painter.drawLine(center.x() - 20, center.y(), center.x() + 20, center.y())
+                
+                painter.setPen(QPen(QColor(255, 0, 0, 60), 1))
+                for radius in [50, 100, 150]:
+                    painter.drawEllipse(center, radius, radius)
+                
+                painter.end()
                 self.setPixmap(result)
                 
-                # Position the magnifier near but not under the cursor
-                cursor_offset = 20
-                mag_x = pos.x() + cursor_offset
-                mag_y = pos.y() - self.size - cursor_offset
+                screen_pos = self.parent.mapToGlobal(doc_pos)
+                parent_rect = self.parent.rect()
                 
-                # Keep magnifier within parent widget bounds
-                if mag_x + self.size > self.parent.width():
-                    mag_x = pos.x() - self.size - cursor_offset
+                mag_x = doc_pos.x() + 30
+                mag_y = doc_pos.y() - self.size//2
+                
+                if mag_x + self.size > parent_rect.width():
+                    mag_x = doc_pos.x() - self.size - 30
+                
                 if mag_y < 0:
-                    mag_y = pos.y() + cursor_offset
+                    mag_y = 0
+                elif mag_y + self.size > parent_rect.height():
+                    mag_y = parent_rect.height() - self.size
                 
                 self.move(mag_x, mag_y)
                 if force_show:
@@ -73,7 +88,6 @@ class Magnifier(QLabel):
             self.hide()
 
     def cleanup(self):
-        """Clean up resources"""
         try:
             self.hide()
             self.setPixmap(QPixmap())
@@ -90,10 +104,26 @@ class MeasurementItem:
     def __str__(self):
         return f"{self.type}: {self.value:.2f} {self.unit} - {self.description}"
 
+class DrawingLayer:
+    def __init__(self, name, color=QColor('blue')):
+        self.name = name
+        self.color = color
+        self.visible = True
+        self.measurements = []
+
 class QuantityEstimator(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.initUI()
+        
+        # Initialize drawing layers first
+        self.layers = {
+            'Calibration': DrawingLayer('Calibration', QColor(0, 150, 0)),  # Green
+            'Distance': DrawingLayer('Distance', QColor(0, 0, 255)),  # Blue
+            'Area': DrawingLayer('Area', QColor(255, 0, 0))  # Red
+        }
+        self.active_layer = 'Distance'  # Default active layer
+        
+        # Initialize other attributes
         self.current_pdf = None
         self.current_page = 0
         self.scale_factor = 1.0
@@ -110,23 +140,14 @@ class QuantityEstimator(QMainWindow):
         self.current_pixmap = None
         self.calibration_in_progress = False
         self.show_magnifier = False
-
-    def closeEvent(self, event):
-        try:
-            if self.magnifier:
-                self.magnifier.cleanup()
-            if self.current_pdf:
-                self.current_pdf.close()
-            event.accept()
-        except Exception as e:
-            print(f"Error in closeEvent: {str(e)}")
-            event.accept()
-
-    def initUI(self):
+        self.last_mouse_pos = None
+        
+        # Initialize UI after all attributes
+        self.initUI()
         self.setWindowTitle('Quantity Estimator')
         self.setGeometry(100, 100, 1400, 800)
 
-        # Create main widget and layout
+    def initUI(self):
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         main_layout = QHBoxLayout(main_widget)
@@ -137,7 +158,7 @@ class QuantityEstimator(QMainWindow):
         sidebar.setMinimumWidth(250)
         sidebar_layout = QVBoxLayout(sidebar)
 
-        # Project Info Group
+        # Project Information
         project_group = QGroupBox("Project Information")
         project_layout = QFormLayout()
         self.project_name = QLineEdit()
@@ -155,7 +176,6 @@ class QuantityEstimator(QMainWindow):
         calibration_group = QGroupBox("Scale Calibration")
         calibration_layout = QVBoxLayout()
         
-        # Known scale input
         scale_layout = QHBoxLayout()
         self.scale_value = QDoubleSpinBox()
         self.scale_value.setRange(0.1, 1000)
@@ -174,7 +194,7 @@ class QuantityEstimator(QMainWindow):
         calibration_group.setLayout(calibration_layout)
         tools_layout.addWidget(calibration_group)
 
-        # Orientation controls
+        # Orientation Group
         orientation_group = QGroupBox("Page Orientation")
         orientation_layout = QHBoxLayout()
         
@@ -197,12 +217,11 @@ class QuantityEstimator(QMainWindow):
         orientation_group.setLayout(orientation_layout)
         tools_layout.addWidget(orientation_group)
 
-        # Add measurement tools
+        # Measurement Type
         self.measurement_type = QComboBox()
         self.measurement_type.addItems(['None', 'Distance', 'Area', 'Count'])
         self.measurement_type.currentTextChanged.connect(self.change_measurement_mode)
 
-        # Description input
         description_layout = QFormLayout()
         self.description_input = QLineEdit()
         description_layout.addRow("Description:", self.description_input)
@@ -213,7 +232,7 @@ class QuantityEstimator(QMainWindow):
         tools_group.setLayout(tools_layout)
         sidebar_layout.addWidget(tools_group)
 
-        # Measurements List
+        # Measurements Group
         measurements_group = QGroupBox("Measurements")
         measurements_layout = QVBoxLayout()
         self.measurements_tree = QTreeWidget()
@@ -223,17 +242,54 @@ class QuantityEstimator(QMainWindow):
         measurements_group.setLayout(measurements_layout)
         sidebar_layout.addWidget(measurements_group)
 
-        # Add sidebar to main layout
+        # Layer Controls
+        layer_group = QGroupBox("Layers")
+        layer_layout = QVBoxLayout()
+        
+        self.layer_controls = {}
+        for layer_name, layer in self.layers.items():
+            layer_widget = QWidget()
+            layer_h_layout = QHBoxLayout()
+            layer_widget.setLayout(layer_h_layout)
+            
+            # Visibility checkbox
+            visibility_cb = QCheckBox()
+            visibility_cb.setChecked(True)
+            visibility_cb.stateChanged.connect(lambda state, name=layer_name: self.toggle_layer_visibility(name, state))
+            
+            # Color indicator
+            color_btn = QPushButton()
+            color_btn.setFixedSize(20, 20)
+            color_btn.setStyleSheet(f"background-color: {layer.color.name()}; border: none;")
+            color_btn.clicked.connect(lambda checked, name=layer_name: self.change_layer_color(name))
+            
+            # Layer name label
+            name_label = QLabel(layer_name)
+            
+            layer_h_layout.addWidget(visibility_cb)
+            layer_h_layout.addWidget(color_btn)
+            layer_h_layout.addWidget(name_label)
+            layer_h_layout.addStretch()
+            
+            self.layer_controls[layer_name] = {
+                'widget': layer_widget,
+                'checkbox': visibility_cb,
+                'color_btn': color_btn
+            }
+            layer_layout.addWidget(layer_widget)
+        
+        layer_group.setLayout(layer_layout)
+        sidebar_layout.addWidget(layer_group)
+
         main_layout.addWidget(sidebar)
 
-        # Create content area
+        # Content Area
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
 
-        # Create toolbar
+        # Toolbar
         toolbar = QHBoxLayout()
         
-        # Add buttons
         self.load_button = QPushButton('Load PDF')
         self.load_button.clicked.connect(self.load_pdf)
         
@@ -243,7 +299,6 @@ class QuantityEstimator(QMainWindow):
         self.zoom_out_button = QPushButton('Zoom Out')
         self.zoom_out_button.clicked.connect(self.zoom_out)
 
-        # Page navigation
         self.page_spin = QSpinBox()
         self.page_spin.setMinimum(1)
         self.page_spin.valueChanged.connect(self.change_page)
@@ -255,52 +310,75 @@ class QuantityEstimator(QMainWindow):
         toolbar.addWidget(self.page_spin)
         toolbar.addStretch()
 
-        # Add toolbar to content layout
         content_layout.addLayout(toolbar)
 
-        # Create scroll area for PDF view
+        # PDF Display Area
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setAlignment(Qt.AlignCenter)
 
-        # Create label for displaying PDF
         self.pdf_label = QLabel()
         self.pdf_label.setAlignment(Qt.AlignCenter)
         self.pdf_label.setMouseTracking(True)
         self.scroll_area.setWidget(self.pdf_label)
 
-        # Initialize magnifier after pdf_label is created
         self.magnifier = Magnifier(self.pdf_label)
         
-        # Connect mouse events
         self.pdf_label.mousePressEvent = self.on_mouse_press
         self.pdf_label.mouseMoveEvent = self.on_mouse_move
         self.pdf_label.mouseReleaseEvent = self.on_mouse_release
 
-        # Add scroll area to content layout
         content_layout.addWidget(self.scroll_area)
-
-        # Add content area to main layout
         main_layout.addWidget(content_widget)
+
+    def closeEvent(self, event):
+        try:
+            if self.magnifier:
+                self.magnifier.cleanup()
+            if self.current_pdf:
+                self.current_pdf.close()
+            event.accept()
+        except Exception as e:
+            print(f"Error in closeEvent: {str(e)}")
+            event.accept()
 
     def change_page(self, value):
         if self.current_pdf:
             self.current_page = value - 1
             self.display_page()
 
-    def add_measurement_to_list(self, measurement_type, value, unit):
-        description = self.description_input.text() or f"{measurement_type} {len(self.measurements) + 1}"
-        measurement = MeasurementItem(measurement_type, value, unit, description)
-        self.measurements.append(measurement)
-        
-        item = QTreeWidgetItem(self.measurements_tree)
-        item.setText(0, measurement_type)
-        item.setText(1, f"{value:.2f} {unit}")
-        item.setText(2, description)
-        
-        self.measurements_tree.resizeColumnToContents(0)
-        self.measurements_tree.resizeColumnToContents(1)
-        self.description_input.clear()
+    def add_measurement_to_list(self, measurement_type, value, unit, description=""):
+        try:
+            if not description:
+                description = f"{measurement_type} {len(self.measurements) + 1}"
+            
+            # Create measurement item with points
+            measurement = MeasurementItem(measurement_type, value, unit, description)
+            measurement.points = self.measurement_points.copy()  # Store points for drawing
+            
+            # Add to appropriate layer
+            layer_name = measurement_type if measurement_type in self.layers else 'Distance'
+            self.layers[layer_name].measurements.append(measurement)
+            self.measurements.append(measurement)
+            
+            # Add to tree widget with layer color
+            item = QTreeWidgetItem(self.measurements_tree)
+            item.setText(0, measurement_type)
+            item.setText(1, f"{value:.2f} {unit}")
+            item.setText(2, description)
+            
+            layer_color = self.layers[layer_name].color
+            for col in range(3):
+                item.setBackground(col, QColor(layer_color.red(), layer_color.green(), layer_color.blue(), 30))
+            
+            self.measurements_tree.resizeColumnToContents(0)
+            self.measurements_tree.resizeColumnToContents(1)
+            self.measurements_tree.resizeColumnToContents(2)
+            
+            self.description_input.clear()
+            
+        except Exception as e:
+            print(f"Error adding measurement to list: {str(e)}")
 
     def load_pdf(self):
         file_name, _ = QFileDialog.getOpenFileName(
@@ -318,7 +396,6 @@ class QuantityEstimator(QMainWindow):
                 QMessageBox.warning(self, "Error", "Failed to load PDF")
 
     def start_calibration(self):
-        """Start the calibration process"""
         try:
             if not self.current_pdf:
                 QMessageBox.warning(self, "Warning", "Please load a PDF first")
@@ -327,7 +404,6 @@ class QuantityEstimator(QMainWindow):
             scale_text = self.scale_unit.currentText()
             
             if scale_text:
-                # Parse architectural scale
                 scale_value = self.parse_architectural_scale(scale_text)
                 self.known_scale = scale_value
             else:
@@ -347,14 +423,16 @@ class QuantityEstimator(QMainWindow):
             self.cleanup_calibration()
 
     def on_mouse_move(self, event):
-        """Update magnifier position as mouse moves"""
         try:
             if not self.pdf_label.pixmap() or self.pdf_label.pixmap().isNull():
                 return
                 
+            self.last_mouse_pos = event.pos()  
             pos = event.pos()
+            
             if self.show_magnifier and self.magnifier and self.current_pixmap:
-                self.magnifier.update_magnifier(pos, self.current_pixmap, force_show=True)
+                viewport_pos = self.pdf_label.mapFromGlobal(QCursor.pos())
+                self.magnifier.update_magnifier(viewport_pos, self.current_pixmap, force_show=True)
                 
             if self.drawing and self.measurement_mode == "area":
                 self.current_measurement = pos
@@ -373,7 +451,8 @@ class QuantityEstimator(QMainWindow):
                 if self.measurement_mode == "calibration":
                     self.measurement_points.append(pos)
                     if len(self.measurement_points) == 2:
-                        self.complete_calibration()
+                        self.display_page()  # Show line
+                        self.prompt_for_distance()  # Ask for distance
                 elif self.measurement_mode == "distance":
                     self.measurement_points.append(pos)
                     if len(self.measurement_points) == 2:
@@ -382,8 +461,33 @@ class QuantityEstimator(QMainWindow):
         except Exception as e:
             print(f"Error in mouse press: {str(e)}")
 
+    def prompt_for_distance(self):
+        try:
+            pixels = ((self.measurement_points[1].x() - self.measurement_points[0].x()) ** 2 +
+                     (self.measurement_points[1].y() - self.measurement_points[0].y()) ** 2) ** 0.5
+            
+            distance, ok = QInputDialog.getDouble(self, "Enter Distance",
+                "Enter the actual distance (in feet):", 1, 0, 1000, 2)
+            
+            if ok:
+                self.scale_calibration = pixels / distance
+                self.scale_value.setValue(distance)
+                
+                calibration_desc = f"Calibration Line ({distance:.2f} ft)"
+                self.add_measurement_to_list("Calibration", distance, "feet", calibration_desc)
+                
+                QMessageBox.information(self, "Calibration Complete", 
+                    f"Scale set to {distance:.2f} feet per {pixels:.2f} pixels")
+            else:
+                self.measurement_points = []
+                
+        except Exception as e:
+            print(f"Error in distance input: {str(e)}")
+            self.scale_calibration = 1.0
+        finally:
+            self.cleanup_calibration()
+
     def on_mouse_release(self, event):
-        """Handle mouse release events"""
         try:
             if self.drawing and self.measurement_mode == "area":
                 self.measurement_points.append(event.pos())
@@ -395,12 +499,10 @@ class QuantityEstimator(QMainWindow):
             print(f"Error in mouse release: {str(e)}")
 
     def complete_calibration(self):
-        """Complete the calibration process"""
         try:
             if len(self.measurement_points) != 2:
                 return
                 
-            # Calculate pixels
             pixels = ((self.measurement_points[1].x() - self.measurement_points[0].x()) ** 2 +
                      (self.measurement_points[1].y() - self.measurement_points[0].y()) ** 2) ** 0.5
             
@@ -427,7 +529,6 @@ class QuantityEstimator(QMainWindow):
             self.cleanup_calibration()
 
     def cleanup_calibration(self):
-        """Clean up calibration state"""
         try:
             self.measurement_mode = None
             self.measurement_points = []
@@ -440,7 +541,6 @@ class QuantityEstimator(QMainWindow):
             print(f"Error in cleanup_calibration: {str(e)}")
 
     def keyPressEvent(self, event):
-        """Handle ESC key to cancel calibration"""
         try:
             if event.key() == Qt.Key_Escape:
                 self.cleanup_calibration()
@@ -458,22 +558,17 @@ class QuantityEstimator(QMainWindow):
             if len(self.measurement_points) != 2:
                 return
             
-            # Calculate distance in pixels
             pixels = ((self.measurement_points[1].x() - self.measurement_points[0].x()) ** 2 +
                      (self.measurement_points[1].y() - self.measurement_points[0].y()) ** 2) ** 0.5
             
-            # Convert to feet using scale calibration
             if self.scale_calibration:
                 feet = pixels / self.scale_calibration
-                # Create measurement item
-                measurement = MeasurementItem("Distance", feet, "feet", self.current_description)
-                self.measurements.append(measurement)
-                # Update measurements list
-                self.update_measurements_list()
-                # Reset state
-                self.measurement_points = []
-                # Refresh display
+                description = self.description_input.text()
+                self.add_measurement_to_list("Distance", feet, "feet", description)
+                
                 self.display_page()
+                
+            self.measurement_points = []
                 
         except Exception as e:
             print(f"Error in calculate_distance: {str(e)}")
@@ -484,7 +579,6 @@ class QuantityEstimator(QMainWindow):
         if len(self.measurement_points) < 3:
             return
 
-        # Calculate area using shoelace formula
         area = 0
         for i in range(len(self.measurement_points)):
             j = (i + 1) % len(self.measurement_points)
@@ -492,7 +586,6 @@ class QuantityEstimator(QMainWindow):
             area -= self.measurement_points[j].x() * self.measurement_points[i].y()
         area = abs(area) / 2
 
-        # Convert to square feet
         square_feet = area / (self.scale_calibration ** 2)
         self.add_measurement_to_list("Area", square_feet, "sq.ft")
         QMessageBox.information(self, "Area", f"Area: {square_feet:.2f} square feet")
@@ -509,12 +602,23 @@ class QuantityEstimator(QMainWindow):
         self.display_page()
 
     def parse_architectural_scale(self, scale_text):
-        # Convert architectural scale to decimal (e.g., "1/4\"=1'" to 48)
         fraction = scale_text.split('=')[0].strip('"')
         if '/' in fraction:
             num, denom = fraction.split('/')
             return 12.0 * float(denom) / float(num)
         return float(fraction) * 12.0
+
+    def toggle_layer_visibility(self, layer_name, state):
+        self.layers[layer_name].visible = bool(state)
+        self.display_page()
+
+    def change_layer_color(self, layer_name):
+        color = QColorDialog.getColor(self.layers[layer_name].color, self)
+        if color.isValid():
+            self.layers[layer_name].color = color
+            self.layer_controls[layer_name]['color_btn'].setStyleSheet(
+                f"background-color: {color.name()}; border: none;")
+            self.display_page()
 
     def display_page(self):
         try:
@@ -522,55 +626,82 @@ class QuantityEstimator(QMainWindow):
                 return
                 
             page = self.current_pdf[self.current_page]
-            
-            # Apply rotation based on orientation
             matrix = fitz.Matrix(self.scale_factor, self.scale_factor)
             matrix.prerotate(self.orientation)
-            
             pix = page.get_pixmap(matrix=matrix)
-            
-            # Convert PyMuPDF pixmap to QImage
             img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(img)
-            
-            # Store current pixmap
             self.current_pixmap = QPixmap(pixmap)
             
+            # Create drawing pixmap
+            drawing_pixmap = QPixmap(pixmap)
+            painter = QPainter(drawing_pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            
+            # Draw measurements from each visible layer
+            for layer_name, layer in self.layers.items():
+                if layer.visible:
+                    pen = QPen(layer.color, 2)
+                    painter.setPen(pen)
+                    
+                    for measurement in layer.measurements:
+                        if hasattr(measurement, 'points') and len(measurement.points) >= 2:
+                            # Draw line
+                            painter.drawLine(measurement.points[0], measurement.points[1])
+                            
+                            # Draw endpoints
+                            painter.drawEllipse(measurement.points[0], 5, 5)
+                            painter.drawEllipse(measurement.points[1], 5, 5)
+                            
+                            # Draw measurement text
+                            mid_x = (measurement.points[0].x() + measurement.points[1].x()) / 2
+                            mid_y = (measurement.points[0].y() + measurement.points[1].y()) / 2
+                            
+                            # Draw text with background
+                            text = f"{measurement.value:.2f} {measurement.unit}"
+                            text_rect = painter.fontMetrics().boundingRect(text)
+                            text_rect.moveCenter(QPoint(int(mid_x), int(mid_y - 15)))
+                            
+                            painter.fillRect(text_rect, QColor(255, 255, 255, 200))
+                            painter.drawText(text_rect, Qt.AlignCenter, text)
+            
+            # Draw current measurement points
             if self.measurement_points:
-                # Create a copy for drawing
-                drawing_pixmap = QPixmap(pixmap)
-                painter = QPainter(drawing_pixmap)
-                painter.setPen(QPen(QColor('red'), 2))
+                current_layer = self.layers[self.active_layer]
+                painter.setPen(QPen(current_layer.color, 3))
                 
                 for i, point in enumerate(self.measurement_points):
-                    # Draw point marker
                     painter.drawEllipse(point, 5, 5)
                     painter.drawLine(point.x() - 10, point.y(), point.x() + 10, point.y())
                     painter.drawLine(point.x(), point.y() - 10, point.x(), point.y() + 10)
                     
                     if i > 0:
                         painter.drawLine(self.measurement_points[i-1], point)
-                        if self.measurement_mode == "distance" and i == 1:
+                        
+                        if (self.measurement_mode == "calibration" or self.measurement_mode == "distance") and i == 1:
                             pixels = ((point.x() - self.measurement_points[0].x()) ** 2 +
                                     (point.y() - self.measurement_points[0].y()) ** 2) ** 0.5
-                            feet = pixels / self.scale_calibration
+                            
+                            if self.measurement_mode == "calibration":
+                                measurement_text = f"{pixels:.1f} pixels"
+                            else:
+                                feet = pixels / self.scale_calibration
+                                measurement_text = f"{feet:.2f} ft"
+                            
                             mid_x = (point.x() + self.measurement_points[0].x()) / 2
                             mid_y = (point.y() + self.measurement_points[0].y()) / 2
-                            painter.drawText(QPoint(mid_x, mid_y), f"{feet:.2f}'")
-                
-                if self.current_measurement and self.measurement_points:
-                    painter.drawLine(self.measurement_points[-1], self.current_measurement)
-                
-                if self.measurement_mode == "area" and len(self.measurement_points) > 2:
-                    painter.drawLine(self.measurement_points[-1], self.measurement_points[0])
-                
-                painter.end()
-                pixmap = drawing_pixmap
+                            
+                            text_rect = painter.fontMetrics().boundingRect(measurement_text)
+                            text_rect.moveCenter(QPoint(int(mid_x), int(mid_y - 15)))
+                            painter.fillRect(text_rect, QColor(255, 255, 255, 200))
+                            painter.drawText(text_rect, Qt.AlignCenter, measurement_text)
+            
+            painter.end()
+            pixmap = drawing_pixmap
             
             self.pdf_label.setPixmap(pixmap)
             self.pdf_label.setMinimumSize(1, 1)
             
-            # Update magnifier if it was showing
             if self.last_mouse_pos and (self.calibration_in_progress or self.measurement_mode):
                 self.magnifier.update_magnifier(self.last_mouse_pos, pixmap, force_show=True)
                 
@@ -584,7 +715,7 @@ class QuantityEstimator(QMainWindow):
     def zoom_out(self):
         self.scale_factor /= 1.2
         self.display_page()
-
+        
 def main():
     app = QApplication(sys.argv)
     ex = QuantityEstimator()
