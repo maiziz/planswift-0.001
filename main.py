@@ -16,14 +16,14 @@ class Magnifier(QLabel):
         super().__init__(parent)
         self.parent = parent
         self.zoom_factor = zoom_factor
-        self.size = 500  
+        self.size = 100  
         self.setFixedSize(self.size, self.size)
         self.setMouseTracking(True)
         self.hide()
         self.setStyleSheet("""
             background-color: rgba(255, 255, 255, 20);
             border: 2px solid red;
-            border-radius: 250px;
+            border-radius: 50px;
         """)
 
     def update_magnifier(self, pos, source_pixmap, force_show=False):
@@ -58,7 +58,7 @@ class Magnifier(QLabel):
                 painter.drawLine(center.x() - 20, center.y(), center.x() + 20, center.y())
                 
                 painter.setPen(QPen(QColor(255, 0, 0, 60), 1))
-                for radius in [50, 100, 150]:
+                for radius in [25, 50, 75]:
                     painter.drawEllipse(center, radius, radius)
                 
                 painter.end()
@@ -141,7 +141,6 @@ class QuantityEstimator(QMainWindow):
         self.calibration_in_progress = False
         self.show_magnifier = False
         self.last_mouse_pos = None
-        self.continuous_measure = False
         
         # Initialize UI after all attributes
         self.initUI()
@@ -449,30 +448,16 @@ class QuantityEstimator(QMainWindow):
         try:
             if event.button() == Qt.LeftButton:
                 pos = event.pos()
-                
                 if self.measurement_mode == "calibration":
                     self.measurement_points.append(pos)
                     if len(self.measurement_points) == 2:
                         self.display_page()  # Show line
                         self.prompt_for_distance()  # Ask for distance
-                        
                 elif self.measurement_mode == "distance":
                     self.measurement_points.append(pos)
                     if len(self.measurement_points) == 2:
                         self.calculate_distance()
                         
-                elif self.measurement_mode == "area":
-                    self.measurement_points.append(pos)
-                    self.display_page()
-                    
-                elif self.measurement_mode == "count":
-                    self.add_count_point(pos)
-                    
-            elif event.button() == Qt.RightButton:
-                # Right click completes current measurement
-                if self.measurement_mode == "area" and len(self.measurement_points) >= 3:
-                    self.calculate_area()
-                
         except Exception as e:
             print(f"Error in mouse press: {str(e)}")
 
@@ -558,35 +543,15 @@ class QuantityEstimator(QMainWindow):
     def keyPressEvent(self, event):
         try:
             if event.key() == Qt.Key_Escape:
-                # Complete current measurement if in progress
-                if self.measurement_mode == 'area' and len(self.measurement_points) >= 3:
-                    self.calculate_area()
-                elif self.measurement_mode == 'count':
-                    self.complete_count()
-                
-                # Reset measurement state
-                self.cleanup_measurement()
-                
-            elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
-                # Complete current area measurement
-                if self.measurement_mode == 'area' and len(self.measurement_points) >= 3:
-                    self.calculate_area()
-                
+                self.cleanup_calibration()
         except Exception as e:
             print(f"Error in keyPressEvent: {str(e)}")
 
-    def cleanup_measurement(self):
-        try:
-            self.measurement_points = []
-            self.current_measurement = None
-            self.drawing = False
-            self.show_magnifier = False
-            if self.magnifier:
-                self.magnifier.cleanup()
-            self.measurement_type.setCurrentText('None')
-            self.display_page()
-        except Exception as e:
-            print(f"Error in cleanup_measurement: {str(e)}")
+    def change_measurement_mode(self, mode):
+        self.measurement_mode = mode.lower() if mode != 'None' else None
+        self.measurement_points = []
+        self.current_measurement = None
+        self.display_page()
 
     def calculate_distance(self):
         try:
@@ -601,86 +566,31 @@ class QuantityEstimator(QMainWindow):
                 description = self.description_input.text()
                 self.add_measurement_to_list("Distance", feet, "feet", description)
                 
-                # Keep the line visible
                 self.display_page()
                 
-                # Continue measuring if in continuous mode
-                if self.continuous_measure:
-                    # Use last point as first point of next measurement
-                    self.measurement_points = [self.measurement_points[1]]
-                else:
-                    self.measurement_points = []
+            self.measurement_points = []
                 
         except Exception as e:
             print(f"Error in calculate_distance: {str(e)}")
             self.measurement_points = []
             self.display_page()
 
-    def change_measurement_mode(self, mode):
-        try:
-            self.measurement_mode = mode.lower() if mode != 'None' else None
-            self.measurement_points = []
-            self.current_measurement = None
-            self.drawing = mode.lower() == 'area'  # Enable drawing mode for area
-            
-            # Enable continuous measurement mode
-            self.continuous_measure = mode.lower() in ['distance', 'area', 'count']
-            
-            if self.measurement_mode:
-                self.show_magnifier = True
-                if self.magnifier:
-                    self.magnifier.cleanup()
-                self.magnifier = Magnifier(self.pdf_label)
-                
-                # Show measurement mode instructions
-                instruction = {
-                    'distance': "Click two points to measure distance. Measurements will continue until ESC.",
-                    'area': "Click points to define area. Double-click or ESC to complete.",
-                    'count': "Click to count points. ESC to finish."
-                }.get(self.measurement_mode, "")
-                
-                if instruction:
-                    QMessageBox.information(self, "Measurement Mode", instruction)
-            else:
-                self.show_magnifier = False
-                if self.magnifier:
-                    self.magnifier.cleanup()
-            
-            self.display_page()
-            
-        except Exception as e:
-            print(f"Error changing measurement mode: {str(e)}")
-
     def calculate_area(self):
-        try:
-            if len(self.measurement_points) < 3:
-                return
+        if len(self.measurement_points) < 3:
+            return
 
-            # Calculate area using polygon points
-            area = 0
-            for i in range(len(self.measurement_points)):
-                j = (i + 1) % len(self.measurement_points)
-                area += self.measurement_points[i].x() * self.measurement_points[j].y()
-                area -= self.measurement_points[j].x() * self.measurement_points[i].y()
-            area = abs(area) / 2
+        area = 0
+        for i in range(len(self.measurement_points)):
+            j = (i + 1) % len(self.measurement_points)
+            area += self.measurement_points[i].x() * self.measurement_points[j].y()
+            area -= self.measurement_points[j].x() * self.measurement_points[i].y()
+        area = abs(area) / 2
 
-            # Convert to square feet using scale
-            square_feet = area / (self.scale_calibration ** 2)
-            
-            # Add to measurements list
-            description = self.description_input.text()
-            self.add_measurement_to_list("Area", square_feet, "sq.ft", description)
-            
-            # Continue in area mode if continuous
-            if self.continuous_measure:
-                self.measurement_points = []
-                QMessageBox.information(self, "Area", f"Area: {square_feet:.2f} square feet\nStart new area measurement")
-            else:
-                self.cleanup_measurement()
-                
-        except Exception as e:
-            print(f"Error calculating area: {str(e)}")
-            self.cleanup_measurement()
+        square_feet = area / (self.scale_calibration ** 2)
+        self.add_measurement_to_list("Area", square_feet, "sq.ft")
+        QMessageBox.information(self, "Area", f"Area: {square_feet:.2f} square feet")
+        self.drawing = False
+        self.measurement_points = []
 
     def change_orientation(self, button):
         if button == self.portrait_btn:
@@ -805,31 +715,7 @@ class QuantityEstimator(QMainWindow):
     def zoom_out(self):
         self.scale_factor /= 1.2
         self.display_page()
-        
-    def add_count_point(self, pos):
-        try:
-            # Add count marker
-            description = self.description_input.text() or f"Point {len(self.measurements) + 1}"
-            self.add_measurement_to_list("Count", 1, "point", description)
-            
-            # Store point for display
-            measurement = self.measurements[-1]
-            measurement.points = [pos]
-            
-            # Update display
-            self.display_page()
-            
-        except Exception as e:
-            print(f"Error adding count point: {str(e)}")
 
-    def complete_count(self):
-        try:
-            if any(m.type == "Count" for m in self.measurements):
-                total = sum(1 for m in self.measurements if m.type == "Count")
-                QMessageBox.information(self, "Count Complete", f"Total count: {total} points")
-        except Exception as e:
-            print(f"Error completing count: {str(e)}")
-        
 def main():
     app = QApplication(sys.argv)
     ex = QuantityEstimator()
